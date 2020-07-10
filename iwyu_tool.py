@@ -8,7 +8,6 @@
 # License. See LICENSE.TXT for details.
 #
 ##===----------------------------------------------------------------------===##
-
 """ Driver to consume a Clang compilation database and invoke IWYU.
 
 Example usage with CMake:
@@ -39,14 +38,12 @@ import argparse
 import tempfile
 import subprocess
 
-
 CORRECT_RE = re.compile(r'^\((.*?) has correct #includes/fwd-decls\)$')
 SHOULD_ADD_RE = re.compile(r'^(.*?) should add these lines:$')
 SHOULD_REMOVE_RE = re.compile(r'^(.*?) should remove these lines:$')
 FULL_LIST_RE = re.compile(r'The full include-list for (.*?):$')
 END_RE = re.compile(r'^---$')
 LINES_RE = re.compile(r'^- (.*?)  // lines ([0-9]+)-[0-9]+$')
-
 
 GENERAL, ADD, REMOVE, LIST = range(4)
 
@@ -80,7 +77,8 @@ def clang_formatter(output):
         elif state[0] == GENERAL:
             formatted.append(line)
         elif state[0] == ADD:
-            formatted.append('%s:1:1: error: add the following line' % state[1])
+            formatted.append('%s:1:1: error: add the following line' %
+                             state[1])
             formatted.append(line)
         elif state[0] == REMOVE:
             match = LINES_RE.match(line)
@@ -93,17 +91,14 @@ def clang_formatter(output):
 
 
 DEFAULT_FORMAT = 'iwyu'
-FORMATTERS = {
-    'iwyu': lambda output: output,
-    'clang': clang_formatter
-}
-
+FORMATTERS = {'iwyu': lambda output: output, 'clang': clang_formatter}
 
 if sys.platform.startswith('win'):
     # Case-insensitive match on Windows
     def normcase(s):
         return s.lower()
 else:
+
     def normcase(s):
         return s
 
@@ -259,17 +254,14 @@ class Process(object):
     def start(cls, invocation):
         """ Start a Process for the invocation and capture stdout+stderr. """
         outfile = tempfile.TemporaryFile(prefix='iwyu')
-        process = subprocess.Popen(
-            invocation.command,
-            cwd=invocation.cwd,
-            stdout=outfile,
-            stderr=subprocess.STDOUT)
+        process = subprocess.Popen(invocation.command,
+                                   cwd=invocation.cwd,
+                                   stdout=outfile,
+                                   stderr=subprocess.STDOUT)
         return cls(process, outfile)
 
 
-KNOWN_COMPILER_WRAPPERS=frozenset([
-    "ccache"
-])
+KNOWN_COMPILER_WRAPPERS = frozenset(["ccache"])
 
 
 class Invocation(object):
@@ -282,7 +274,7 @@ class Invocation(object):
         return ' '.join(self.command)
 
     @classmethod
-    def from_compile_command(cls, entry, extra_args):
+    def from_compile_command(cls, entry, extra_args, compiler_extra_args):
         """ Parse a JSON compilation database entry into new Invocation. """
         if 'arguments' in entry:
             # arguments is a command-line in list form.
@@ -303,7 +295,10 @@ class Invocation(object):
             # If the compiler is cl-compatible, let IWYU be cl-compatible.
             extra_args = ['--driver-mode=cl'] + extra_args
 
-        command = [IWYU_EXECUTABLE] + extra_args + compile_args
+        assert isinstance(compiler_extra_args, list)
+        assert isinstance(compiler_extra_args[0], str)
+        command = [IWYU_EXECUTABLE
+                   ] + extra_args + compile_args + compiler_extra_args
         return cls(command, entry['directory'])
 
     def start(self, verbose):
@@ -360,7 +355,13 @@ def execute(invocations, verbose, formatter, jobs):
         return
 
     pending = []
+    total_count = len(invocations)
     while invocations or pending:
+        print("{}/{} done, {} pending, {} queued          ".format(
+            total_count - len(invocations) - len(pending), total_count,
+            len(pending), len(invocations)),
+              end='\r',
+              file=sys.stderr)
         # Collect completed IWYU processes and print results.
         complete = [proc for proc in pending if proc.poll() is not None]
         for proc in complete:
@@ -374,10 +375,12 @@ def execute(invocations, verbose, formatter, jobs):
 
         # Yield CPU.
         time.sleep(0.0001)
+    print("{}/{} done{}".format(total_count, total_count, ' ' * 50),
+          file=sys.stderr)
 
 
 def main(compilation_db_path, source_files, verbose, formatter, jobs,
-         extra_args):
+         isystem_paths, extra_args):
     """ Entry point. """
 
     if not IWYU_EXECUTABLE:
@@ -399,12 +402,17 @@ def main(compilation_db_path, source_files, verbose, formatter, jobs,
               file=sys.stderr)
         return 1
 
+    compiler_extra_args = []
+    for p in isystem_paths:
+        compiler_extra_args.extend(['-isystem', p])
+
     compilation_db = fixup_compilation_db(compilation_db)
     compilation_db = slice_compilation_db(compilation_db, source_files)
 
     # Transform compilation db entries into a list of IWYU invocations.
     invocations = [
-        Invocation.from_compile_command(e, extra_args) for e in compilation_db
+        Invocation.from_compile_command(e, extra_args, compiler_extra_args)
+        for e in compilation_db
     ]
 
     return execute(invocations, verbose, formatter, jobs)
@@ -441,32 +449,50 @@ def _bootstrap(sys_argv):
     customize_usage(parser)
     customize_help(parser)
 
-    parser.add_argument('-v', '--verbose', action='store_true',
+    parser.add_argument('-v',
+                        '--verbose',
+                        action='store_true',
                         help='Print IWYU commands')
-    parser.add_argument('-o', '--output-format', type=str,
-                        choices=FORMATTERS.keys(), default=DEFAULT_FORMAT,
+    parser.add_argument('-o',
+                        '--output-format',
+                        type=str,
+                        choices=FORMATTERS.keys(),
+                        default=DEFAULT_FORMAT,
                         help='Output format (default: %s)' % DEFAULT_FORMAT)
-    parser.add_argument('-j', '--jobs', type=int, default=1,
+    parser.add_argument('-j',
+                        '--jobs',
+                        type=int,
+                        default=1,
                         help='Number of concurrent subprocesses')
-    parser.add_argument('-p', metavar='<build-path>', required=True,
-                        help='Compilation database path', dest='dbpath')
-    parser.add_argument('source', nargs='*',
+    parser.add_argument('-p',
+                        metavar='<build-path>',
+                        required=True,
+                        help='Compilation database path',
+                        dest='dbpath')
+    parser.add_argument('source',
+                        nargs='*',
                         help=('Zero or more source files (or directories) to '
                               'run IWYU on. Defaults to all in compilation '
                               'database.'))
+    parser.add_argument(
+        '--isystem',
+        nargs='*',
+        help='Additional -isystem paths to append to compiler commandline')
 
     def partition_args(argv):
         """ Split around '--' into driver args and IWYU args. """
         try:
             double_dash = argv.index('--')
-            return argv[:double_dash], argv[double_dash+1:]
+            return argv[:double_dash], argv[double_dash + 1:]
         except ValueError:
             return argv, []
+
     argv, extra_args = partition_args(sys_argv[1:])
     args = parser.parse_args(argv)
 
     return main(args.dbpath, args.source, args.verbose,
-                FORMATTERS[args.output_format], args.jobs, extra_args)
+                FORMATTERS[args.output_format], args.jobs, args.isystem,
+                extra_args)
 
 
 if __name__ == '__main__':
