@@ -450,12 +450,12 @@ string PrintableDecl(const Decl* decl, bool terse/*=true*/) {
 string PrintableStmt(const Stmt* stmt) {
   std::string buffer;
   raw_string_ostream ostream(buffer);
-  stmt->dump(ostream, *GlobalSourceManager());
+  stmt->dump();
   return ostream.str();
 }
 
 void PrintStmt(const Stmt* stmt) {
-  stmt->dump(*GlobalSourceManager());  // This prints to errs().
+  stmt->dump();  // This prints to errs().
 }
 
 string PrintableType(const Type* type) {
